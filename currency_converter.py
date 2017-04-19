@@ -1,7 +1,7 @@
 # encoding: utf-8
 import argparse
 import requests
-import re
+import json
 
 
 def parse_arguments():
@@ -77,13 +77,13 @@ class CurrencyConverter:
                 self.__currencies_by_id[self.KNOWN_SYMBOLS_MAP[known_symbol]]
 
     @property
-    def currencies_by_id(self):
+    def currencies_by_id(self)->dict:
         if self.__currencies_by_id is None:
             self.__fill_currency_maps()
         return self.__currencies_by_id
 
     @property
-    def currencies_by_symbol(self):
+    def currencies_by_symbol(self)->dict:
         if self.__currencies_by_symbol is None:
             self.__fill_currency_maps()
         return self.__currencies_by_symbol
@@ -97,15 +97,15 @@ class CurrencyConverter:
             currency
         ))
 
-    def __compose_yql_text(self, input_currency, output_currency):
-        input_currency_id = self.__detect_currency_id(input_currency)
-        output_currency_id = self.__detect_currency_id(output_currency) \
-            if output_currency else None
-        if output_currency_id:
-            pairs_text = "'{}{}'".format(input_currency_id, output_currency_id)
+    def __compose_yql_text(self):
+        if self.output_currency:
+            pairs_text = "'{}{}'".format(
+                self.input_currency,
+                self.output_currency
+            )
         else:
             pairs_text = ','.join([
-                "'{}{}'".format(input_currency_id, cur_id)
+                "'{}{}'".format(self.input_currency, cur_id)
                 for cur_id in self.currencies_by_id
             ])
         query_text = "https://query.yahooapis.com/v1/public/yql?q=select * " \
@@ -116,15 +116,35 @@ class CurrencyConverter:
 
     def __compose_result_from_yahoo_response(self, yahoo_response):
         rates = yahoo_response['query']['results']['rate']
+        if not isinstance(rates, list):
+            rates = [rates]
+        output = {}
+        for rate in rates:
+            currency_id = rate['id'][3:]
+            try:
+                amount = round(float(rate['Ask']) * self.amount, 2)
+                output[currency_id] = amount
+            except ValueError:
+                pass
+        result = {
+            'input': {
+                'amount': self.amount,
+                'currency': self.input_currency
+            },
+            'output': output
+        }
+        return json.dumps(result, indent=4)
 
     def run(self):
-        yahoo_response = requests.get(
-            self.__compose_yql_text(
-                self.input_currency,
+        self.input_currency = self.__detect_currency_id(self.input_currency)
+        if self.output_currency:
+            self.output_currency = self.__detect_currency_id(
                 self.output_currency
             )
+        yahoo_response = requests.get(
+            self.__compose_yql_text()
         ).json()
-        return yahoo_response
+        return self.__compose_result_from_yahoo_response(yahoo_response)
 
 
 def main():
